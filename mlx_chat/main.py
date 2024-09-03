@@ -156,6 +156,7 @@ input[type="radio"]:checked {
 .button-section { 
     padding: 1rem; /* Add padding for spacing */ 
     background-color: #f9f9f9; /* Light background for contrast */ 
+    padding: 0.5rem;
 }
 
 /* Light theme styles */
@@ -665,4 +666,9 @@ def post(msg:str):
                 });
             """))
 
-serve()
+def run_app():
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+if __name__ == "__main__":
+    run_app()
