@@ -261,12 +261,8 @@ def load_model(model_dir):
 
 # Function to search for MLX models
 def search_mlx_models(query):
-    api = HfApi()
-    models = api.list_models(
-        author="mlx-community",
-        search=query
-    )
-    return [model.id for model in models if model.id in mlx_chat_models_list]
+    # We can use our model list mlx_chat_models_list and do a simple search by exact phrase match
+    return [model for model in mlx_chat_models_list if query.lower() in model.lower()]
 
 # Function to download a model
 @app.post("/download_model/{user_id}/{model_id}")
