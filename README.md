@@ -6,7 +6,7 @@ MLX Chat is an AI chatbot interface using MLX and FastHTML.
 
 ## Features
 
-- MLX framework integration
+- MLX for LLM inference on Apple silicon
 - FastHTML user interface
 - Multiple AI model options
 - Adjustable temperature and max tokens
@@ -30,11 +30,3 @@ MLX Chat uses MLX for on device LLM inference and FastHTML for the user interfac
 - Stop Generation
 - Light/Dark Mode
 - Model Search
-
-## Note
-
-Current version uses the dolphin-2.9.4-gemma2-2b-4bit model. Model availability may vary.
-
-## Support
-
-For issues or inquiries, please open an issue in this repository.
