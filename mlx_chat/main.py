@@ -7,6 +7,9 @@ import os
 from starlette.requests import Request
 from fasthtml.components import Zero_md
 import threading
+import json
+from transformers.utils.hub import cached_file
+from datasets import load_dataset
 
 # Set up the app, including daisyui and tailwind for the chat component
 tlink = Script(src="https://cdn.tailwindcss.com"),
@@ -219,7 +222,7 @@ function initToggleableSidebars() {
 document.addEventListener('DOMContentLoaded', initToggleableSidebars);
 """)
 hyperscript = Script(src="https://unpkg.com/hyperscript.org@0.9.11")
-app = FastHTML(hdrs=(tlink, dlink, picolink, zeromd_script, custom_style, resize_script, hyperscript), htmlkw={"data-theme": "light"})
+app = FastHTML(hdrs=(tlink, dlink, picolink, zeromd_script, custom_style, resize_script, hyperscript), htmlkw={"data-theme": "dark"})
 
 # Global variables for model and tokenizer
 model = None
@@ -231,16 +234,23 @@ is_loading_model = False  # New flag to track model loading status
 temperature = 0.7
 max_tokens = 512
 
+mlx_chat_models = load_dataset("cmcmaster/mlx-chat-models")["train"]
+mlx_chat_models = mlx_chat_models.filter(lambda x: x["chat_model"])
+mlx_chat_models_list = mlx_chat_models["model_id"]
+
 def scan() -> List[str]:
     """Scans the Hugging Face cache directory and returns a list of Models."""
     try:
-        hf_cache_info = scan_cache_dir()
-        models = [model.repo_id for model in hf_cache_info.repos]
+        dir = scan_cache_dir()
+        models = [(model.repo_id, model.nb_files) for model in dir.repos if model.repo_type == "model"]
+        # Keep only if nb_files > 1
+        models = [model[0] for model in models if model[1] > 1]
         # Sort alphabetically
         models.sort()
-        return [model for model in models if model.startswith("mlx-community/") and "whisper" not in model]
+        return [model for model in models if model in mlx_chat_models_list]
     except CacheNotFound:
         return []
+
 
 # Function to load a model
 def load_model(model_dir):
@@ -256,7 +266,7 @@ def search_mlx_models(query):
         author="mlx-community",
         search=query
     )
-    return [model.id for model in models]
+    return [model.id for model in models if model.id in mlx_chat_models_list]
 
 # Function to download a model
 @app.post("/download_model/{user_id}/{model_id}")
@@ -347,7 +357,7 @@ def get():
     return Title('MLX Chatbot'), Div(
         Div(
             Div(
-                Button("Dark", id="theme-toggle", cls="small-button"),  # Button with initial text "Dark"
+                Button("Light", id="theme-toggle", cls="small-button"),  # Button with initial text "Light"
                 H1("MLX Chat", cls="ml-5"),  # Heading next to the button
                 cls="flex items-center"  # Flex container for horizontal alignment
             ),
@@ -634,9 +644,9 @@ def post(msg:str):
     
     idx = len(messages)
     messages.append({"role":"user", "content":msg.rstrip()})
-    
+
     # Check if the system role is supported
-    if "System role not supported" not in tokenizer.chat_template:
+    if "System role not supported" not in tokenizer._tokenizer.chat_template:
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     else:
         prompt = tokenizer.apply_chat_template(messages[1:], tokenize=False, add_generation_prompt=True)  # Skip system message
