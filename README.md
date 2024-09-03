@@ -13,6 +13,26 @@ MLX Chat is an AI chatbot interface using MLX and FastHTML.
 - Conversation history
 - Dark and light theme
 
+## Installation
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/mlx-chat.git
+   cd mlx-chat
+   ```
+
+2. Install the package and its dependencies:
+   ```
+   pip install -e .
+   ```
+
+## Running the Application
+
+To run MLX Chat, use the following command from the terminal:
+```
+mlx_chat
+```
+
 ## Usage
 
 1. Select an AI model
