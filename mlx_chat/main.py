@@ -10,6 +10,8 @@ import threading
 import json
 from transformers.utils.hub import cached_file
 from datasets import load_dataset
+from starlette.responses import StreamingResponse
+import asyncio
 
 # Set up the app, including daisyui and tailwind for the chat component
 tlink = Script(src="https://cdn.tailwindcss.com"),
@@ -40,11 +42,13 @@ input[type="radio"]:checked {
     flex-direction: column;
     line-height: 1.2;
     word-break: break-word;
+    text-align: left;  // Add this line
 }
 .model-item {
     display: flex;
     align-items: flex-start;
     margin-bottom: 0.5rem;
+    justify-content: flex-start;  // Add this line
 }
 .resizable-layout {
     display: flex;
@@ -52,11 +56,11 @@ input[type="radio"]:checked {
     width: 100%;
 }
 .sidebar {
-    flex: 0 0 250px;
+    flex: 0 0 350px;
     transition: all 0.3s ease;
     overflow: hidden;
     position: relative;
-    max-width: 250px;
+    max-width: 350px;
     display: flex;
     flex-direction: column;
     height: calc(100vh - 50px); /* Adjust height based on button height */
@@ -72,10 +76,7 @@ input[type="radio"]:checked {
     overflow-y: auto;  // Make the content scrollable
     flex-grow: 1;  // Allow the content to grow and fill the sidebar
 }
-.sidebar-right {
-    flex: 0 0 350px;  /* Wider right sidebar */
-    max-width: 350px;  /* Matching max-width */
-}
+
 .toggle-sidebar {
     position: fixed;
     top: 50%;
@@ -194,6 +195,45 @@ input[type="radio"]:checked {
 .ml-2 {
     margin-left: 0.5rem; /* Add left margin to the heading */
 }
+
+#status-bar {
+    font-weight: bold;
+    color: #007bff;
+}
+
+/* Add these new styles */
+#model_list {
+    text-align: left;
+    width: 100%;
+}
+
+.model-item {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 0.5rem;
+    justify-content: flex-start;
+}
+
+.model-name {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+    word-break: break-word;
+    text-align: left;
+}
+
+// Add these new styles
+#model_list, #downloaded_models {
+    text-align: left;
+}
+
+#downloaded_models .flex.items-center {
+    justify-content: flex-start;
+}
+
+#downloaded_models .flex.flex-col {
+    align-items: flex-start;
+}
 """)
 
 resize_script = Script("""
@@ -222,7 +262,8 @@ function initToggleableSidebars() {
 document.addEventListener('DOMContentLoaded', initToggleableSidebars);
 """)
 hyperscript = Script(src="https://unpkg.com/hyperscript.org@0.9.11")
-app = FastHTML(hdrs=(tlink, dlink, picolink, zeromd_script, custom_style, resize_script, hyperscript), htmlkw={"data-theme": "dark"})
+sselink = Script(src="https://unpkg.com/htmx-ext-sse@2.2.1/sse.js")
+app = FastHTML(hdrs=(tlink, dlink, picolink, zeromd_script, custom_style, resize_script, hyperscript, sselink), htmlkw={"data-theme": "dark"})
 
 # Global variables for model and tokenizer
 model = None
@@ -264,7 +305,10 @@ def search_mlx_models(query):
     # We can use our model list mlx_chat_models_list and do a simple search by exact phrase match
     return [model for model in mlx_chat_models_list if query.lower() in model.lower()]
 
-# Function to download a model
+# Add this new global variable
+download_status = {}
+
+# Modify the download_model_route function
 @app.post("/download_model/{user_id}/{model_id}")
 async def download_model_route(user_id: str, model_id: str):
     try:
@@ -272,25 +316,48 @@ async def download_model_route(user_id: str, model_id: str):
         local_model_dir = os.path.join(directory_path, "models", "download", model_id.split("/")[-1])
         
         status_id = f"status-{user_id}-{model_id}"
+        download_status[status_id] = "Downloading"
         
         # Start the download in a separate thread
         thread = threading.Thread(target=download_model_thread, args=(user_id, model_id, local_model_dir, status_id))
         thread.start()
         
+        return Div(
+            P("Downloading...", id=f"download-status-{status_id}"),
+            hx_ext="sse",
+            sse_connect=f"/download-status/{status_id}",
+            sse_swap="innerHTML",
+            hx_target="#status-bar"
+        )
 
     except Exception as e:
-        return Div(f"Error starting model download: {str(e)}", id="download_status")
+        return Div(f"Error starting model download: {str(e)}", id="status-bar")
 
+# Modify the download_model_thread function
 def download_model_thread(user_id, model_id, local_model_dir, status_id):
     try:
         snapshot_download(
             repo_id=f"{user_id}/{model_id}",
             resume_download=True
         )
-
+        download_status[status_id] = "Completed"
     except Exception as e:
-        print(f"Error downloading model: {str(e)}")
-        # You might want to update an error status here if needed
+        download_status[status_id] = f"Error: {str(e)}"
+
+# Add a new function for SSE
+async def download_status_generator(status_id):
+    while True:
+        status = download_status.get(status_id, "Unknown")
+        yield f"data: <div id='status-bar'>Download status: {status}</div>\n\n"
+        if status in ["Completed", "Error"]:
+            break
+        await asyncio.sleep(1)
+
+# Add a new route for SSE
+@app.get("/download-status/{status_id}")
+async def get_download_status(status_id: str):
+    return StreamingResponse(download_status_generator(status_id), media_type="text/event-stream")
+
 # Function to render markdown
 def render_local_md(md, css=''):
     css_template = Template(Style(css), data_append=True)
@@ -353,11 +420,12 @@ def get():
     return Title('MLX Chatbot'), Div(
         Div(
             Div(
-                Button("Light", id="theme-toggle", cls="small-button"),  # Button with initial text "Light"
-                H1("MLX Chat", cls="ml-5"),  # Heading next to the button
-                cls="flex items-center"  # Flex container for horizontal alignment
+                Button("Light", id="theme-toggle", cls="small-button"),
+                H1("MLX Chat", cls="ml-5"),
+                Div(id="status-bar", cls="ml-auto text-sm"),  # New status bar
+                cls="flex items-center justify-between"  # Updated to spread items
             ),
-            cls="button-section border-b border-gray-300 pb-4 mb-4"  # New container with bottom border
+            cls="button-section border-b border-gray-300 pb-4 mb-4"
         ),
         Script("""
             document.getElementById('theme-toggle').onclick = function() {
@@ -365,7 +433,7 @@ def get():
                 const currentTheme = document.documentElement.getAttribute('data-theme');
                 const newTheme = currentTheme === 'light' ? 'dark' : 'light';
                 document.documentElement.setAttribute('data-theme', newTheme);
-                button.textContent = newTheme === 'light' ? 'Dark' : 'Light';  // Update button text
+                button.textContent = newTheme === 'light' ? 'Dark' : 'Light';
             };
         """),
         Div(
@@ -478,11 +546,11 @@ def list_downloaded_models():
                       hx_trigger="change"),
                 Label(model_name, fr=f"model-{model}", cls="ml-2 text-sm"),
                 Button("Delete", 
-                   cls="btn btn-error btn-xs mt-1",
+                   cls="btn btn-error btn-xs mt-1 ml-auto",
                    hx_delete=f"/delete_model/{model}",
                    hx_target="#downloaded_models",
                    hx_confirm=f"Are you sure you want to delete {model}?"),
-                cls="flex items-center"
+                cls="flex items-center justify-between w-full"
             ),
             cls="flex flex-col mb-4"
         ) for model, model_name in cached_models],
@@ -532,21 +600,21 @@ async def load_model_route(request: Request):
 @app.post("/search_models")
 def search_models(model_query: str):
     models = search_mlx_models(model_query)
-    return Div(*[
-        Div(
+    return Div(
+        *[Div(
             Div(
-                Span(model.split('/')[0], cls="block text-sm"),
-                Span(model.split('/')[1], cls="block text-sm font-bold"),
+                Label(model.split('/')[1], fr=f"model-{model}", cls="model-name"),
                 cls="flex-grow"
             ),
             Button("Download", 
                    hx_post=f"/download_model/{model}", 
-                   hx_target="#download_status",
-                   cls="btn btn-primary btn-xs ml-2"),
-            cls="flex items-start justify-between mb-2 p-2 border-b border-gray-200"
-        ) 
-        for model in models
-    ], id="model_list", cls="flex flex-col mb-4")
+                   hx_target="#status-bar",
+                   cls="btn btn-primary btn-xs"),
+            cls="model-item flex justify-between items-center w-full"
+        ) for model in models],
+        id="model_list",
+        cls="w-full"
+    )
 
 # Add a route to clear the search results
 @app.post("/clear_search")
@@ -674,7 +742,7 @@ def post(msg:str):
 
 def run_app():
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8888)
 
 if __name__ == "__main__":
     run_app()
